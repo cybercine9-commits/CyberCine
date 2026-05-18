@@ -114,7 +114,7 @@
       border:1px solid var(--line); display:flex; flex-direction:column; min-height:100%;
       transition:all .2s ease; overflow:hidden;
     }
-    .card{transform:translateY(-3px); border-color:rgba(34,211,238,.25); box-shadow:var(--shadow)}
+    .card:hover{transform:translateY(-3px); border-color:rgba(34,211,238,.25); box-shadow:var(--shadow)}
     
     .media{position:relative; aspect-ratio:16/10; background:rgba(255,255,255,.02); overflow:hidden}
     .media img{width:100%; height:100%; object-fit:cover; display:block; opacity:0; transition:opacity .3s ease;}
@@ -220,7 +220,7 @@
       .toolbar{grid-template-columns:1fr; gap:10px}
       .grid{grid-template-columns:repeat(2, minmax(0,1fr))}
       .modal-inner{grid-template-columns:1fr}
-      .media{aspect-ratio:16/9; border-right:0; border-bottom:1px solid var(--line)}
+      .modal-media{aspect-ratio:16/9; border-right:0; border-bottom:1px solid var(--line)}
     }
     @media (max-width: 480px){
       .grid{grid-template-columns:1fr}
@@ -363,11 +363,10 @@
     // ==========================================
     // PARÁMETROS CENTRALES DE CONFIGURACIÓN
     // ==========================================
-    const URL_CSV = "https://docs.google.com/spreadsheets/d/1cRLBkJaEfj5GqBiX33hl4pn9MUefPnw6Ak0TMxcunGo/pub?output=csv";        // Enlace de Google Sheets en formato .csv
-    const WHATSAPP_NUMBER = "51912601520";   // Destino del pedido (Prefijo internacional + número)
+    const URL_CSV = "https://docs.google.com/spreadsheets/d/1cRLBkJaEfj5GqBiX33hl4pn9MUefPnw6Ak0TMxcunGo/edit?usp=sharing";        // Enlace de Google Sheets corregido
+    const WHATSAPP_NUMBER = "51912601520";   // Tu número de destino
     const GOAL = 5;                          // Cantidad meta para bonificación/combo
 
-    const CACHE_KEY = "cybercine_raw_cache";
     const CART_KEY = "cybercine_cart_store";
     const DEFAULT_IMAGE = "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(`
       <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 250' fill='#0b1220'><rect width='400' height='250'/><text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' fill='#7C3AED' font-family='sans-serif' font-weight='bold' font-size='24'>CyberCine</text></svg>
@@ -390,7 +389,7 @@
       cartGlobalBadge: document.getElementById('cartGlobalBadge')
     };
 
-    const currency = new Intl.NumberFormat('es-PE', { style: 'currency', currency: 'PEN' });
+    const currency = { format: (num) => `S/. ${parseFloat(num).toFixed(2)}` };
     const escapeHtml = (str = '') => String(str).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
 
     function showToast(title, message, type = 'good') {
@@ -557,28 +556,58 @@
     }
 
     function parseRow(row, idx) {
-      const title = String(getField(row, ['titulo', 'title', 'name', 'nombre']) || `Plan ${idx + 1}`).trim();
+      const title = String(getField(row, ['titulo', 'title', 'name', 'nombre'])).trim();
       const id = String(getField(row, ['id', 'sku', 'codigo']) || idx + 1).trim();
       return {
-        id, formattedId: `#${String(id).padStart(3, '0')}`, title,
+        id, formattedId: `#${String(id).padStart(3, '0')}`, title: title || `Servicio ${idx + 1}`,
         image: normalizeImageUrl(getField(row, ['imagen', 'image', 'url', 'portada'])),
         price: normalizePrice(getField(row, ['precio', 'price', 'valor'])),
-        description: String(getField(row, ['descripcion', 'description', 'sinopsis']) || '').trim(),
-        brand: String(getField(row, ['marca', 'brand', 'estudio']) || '').trim(),
+        description: String(getField(row, ['descripcion', 'description', 'sinopsis']) || 'Acceso privado estable con soporte continuo.').trim(),
+        brand: String(getField(row, ['marca', 'brand', 'estudio']) || 'Streaming').trim(),
         inStock: normalizeAvailability(getField(row, ['stock', 'disponibilidad', 'estado']))
       };
     }
 
     async function loadData() {
       els.grid.innerHTML = ''; for(let i=0; i<4; i++) els.grid.appendChild(document.createElement('div')).className = 'skeleton';
-      let csv = sessionStorage.getItem(CACHE_KEY);
-      if (!csv) {
-        if (!URL_CSV || URL_CSV === "URL_CSV") { els.statusText.textContent = "Falta configurar la constante URL_CSV."; return; }
-        const r = await fetch(URL_CSV, { cache: 'no-store' }); if (!r.ok) throw new Error();
-        csv = await r.text(); try { sessionStorage.setItem(CACHE_KEY, csv); } catch {}
+      els.statusText.textContent = "Sincronizando con el servidor cloud...";
+      
+      try {
+        if (!URL_CSV || URL_CSV.includes("URL_CSV")) {
+          els.statusText.textContent = "Falta configurar la URL del Excel.";
+          return;
+        }
+
+        // Cache buster temporal dinámico para forzar la actualización en vivo
+        const response = await fetch(URL_CSV + (URL_CSV.includes('?') ? '&' : '?') + 't=' + Date.now(), { cache: 'no-store' });
+        if (!response.ok) throw new Error();
+        const csvText = await response.text();
+
+        // Validamos si el Excel no está publicado (Google devuelve código HTML de error de inicio de sesión)
+        if (csvText.trim().startsWith('<!DOCTYPE') || csvText.includes('<html')) {
+          els.statusText.textContent = "Error: Hoja no publicada.";
+          els.grid.innerHTML = `
+            <div class="empty-state">
+              <h3>Falta activar la publicación</h3>
+              <p>El enlace es correcto, pero debes ir a tu Excel en <b>Archivo > Compartir > Publicar en la web</b> y seleccionar formato <b>CSV</b>.</p>
+            </div>`;
+          return;
+        }
+
+        state.products = Papa.parse(csvText, { header: true, skipEmptyLines: true, transformHeader: h => String(h).trim() }).data.map(parseRow).filter(p => p.title);
+        
+        if (state.products.length === 0) {
+          els.statusText.textContent = "0 productos encontrados.";
+          els.grid.innerHTML = `<div class="empty-state"><h3>Catálogo vacío</h3><p>Revisa las columnas de tu hoja de cálculo.</p></div>`;
+          return;
+        }
+
+        applyFilters(); 
+        openItemFromUrl();
+      } catch {
+        els.statusText.textContent = "Error al enlazar datos.";
+        els.grid.innerHTML = `<div class="empty-state"><h3>Error de conexión</h3><p>Verifica tu conexión a internet o el enlace del catálogo.</p></div>`;
       }
-      state.products = Papa.parse(csv, { header: true, skipEmptyLines: true, transformHeader: h => String(h).trim() }).data.map(parseRow).filter(p => p.title);
-      applyFilters(); openItemFromUrl();
     }
 
     function openItemFromUrl() {
@@ -599,7 +628,7 @@
       }
     }
 
-    // Manejadores de Eventos Directos
+    // Manejadores de Eventos
     els.searchInput.addEventListener('input', e => { state.search = e.target.value; applyFilters(); });
     els.sortSelect.addEventListener('change', e => { state.sort = e.target.value; applyFilters(); });
     els.availabilitySelect.addEventListener('change', e => { state.availability = e.target.value; applyFilters(); });
@@ -640,7 +669,7 @@
     });
 
     window.addEventListener('keydown', e => { if (e.key === 'Escape') closeAllDrawers(); });
-    createFloatingOrbs(); updateCartUI(); loadData().catch(() => { els.statusText.textContent = "Error al enlazar datos."; });
+    createFloatingOrbs(); updateCartUI(); loadData();
   </script>
 </body>
 </html>
