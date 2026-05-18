@@ -363,8 +363,8 @@
     // ==========================================
     // PARÁMETROS CENTRALES DE CONFIGURACIÓN
     // ==========================================
-    const URL_CSV = "https://docs.google.com/spreadsheets/d/1cRLBkJaEfj5GqBiX33hl4pn9MUefPnw6Ak0TMxcunGo/edit?usp=sharing";        // Enlace de Google Sheets corregido
-    const WHATSAPP_NUMBER = "51912601520";   // Tu número de destino
+    const URL_CSV = "https://docs.google.com/spreadsheets/d/1cRLBkJaEfj5GqBiX33hl4pn9MUefPnw6Ak0TMxcunGo/edit?usp=sharing";        // Enlace de Google Sheets en formato .csv
+    const WHATSAPP_NUMBER = "51912601520";   // Destino del pedido (Prefijo internacional + número)
     const GOAL = 5;                          // Cantidad meta para bonificación/combo
 
     const CART_KEY = "cybercine_cart_store";
@@ -416,8 +416,11 @@
       return parseFloat(cleaned.match(/-?\d+(?:\.\d+)?/)?.[0] ?? '0') || 0;
     }
 
+    // Soporte flexible para detectar stock (si, disponible, activo)
     function normalizeAvailability(value) {
-      return !['agotado', 'no', '0', 'false', 'sin stock', 'sold out'].includes(String(value ?? '').trim().toLowerCase());
+      const raw = String(value ?? '').trim().toLowerCase();
+      if (!raw || ['agotado', 'no', '0', 'false', 'sin stock', 'sold out'].includes(raw)) return false;
+      return true;
     }
 
     function normalizeImageUrl(url) {
@@ -578,18 +581,19 @@
           return;
         }
 
-        // Cache buster temporal dinámico para forzar la actualización en vivo
+        // Cache buster temporal dinámico para evitar almacenamiento obsoleto
         const response = await fetch(URL_CSV + (URL_CSV.includes('?') ? '&' : '?') + 't=' + Date.now(), { cache: 'no-store' });
         if (!response.ok) throw new Error();
         const csvText = await response.text();
 
-        // Validamos si el Excel no está publicado (Google devuelve código HTML de error de inicio de sesión)
-        if (csvText.trim().startsWith('<!DOCTYPE') || csvText.includes('<html')) {
-          els.statusText.textContent = "Error: Hoja no publicada.";
+        // Control de errores de Privacidad en Google Sheets
+        if (csvText.trim().startsWith('<!DOCTYPE') || csvText.includes('<html') || csvText.includes('ServiceLogin')) {
+          els.statusText.textContent = "Error: Archivo Privado.";
           els.grid.innerHTML = `
             <div class="empty-state">
-              <h3>Falta activar la publicación</h3>
-              <p>El enlace es correcto, pero debes ir a tu Excel en <b>Archivo > Compartir > Publicar en la web</b> y seleccionar formato <b>CSV</b>.</p>
+              <h3 style="color:var(--bad)">⚠️ Tu Excel es Privado</h3>
+              <p style="margin-top:10px">El enlace está bien puesto, pero Google tiene bloqueada la descarga porque la hoja está restringida.</p>
+              <p style="color:var(--muted); font-size:0.9rem; margin-top:5px">Solución: Entra a tu Excel, haz clic en el botón azul de <b>Compartir</b> y cambia de "Restringido" a <b>"Cualquier persona con el enlace"</b>. Luego entra a <b>Archivo > Compartir > Publicar en la web</b> en formato <b>CSV</b> y dale a Publicar.</p>
             </div>`;
           return;
         }
@@ -598,7 +602,7 @@
         
         if (state.products.length === 0) {
           els.statusText.textContent = "0 productos encontrados.";
-          els.grid.innerHTML = `<div class="empty-state"><h3>Catálogo vacío</h3><p>Revisa las columnas de tu hoja de cálculo.</p></div>`;
+          els.grid.innerHTML = `<div class="empty-state"><h3>Catálogo vacío</h3><p>Revisa que las columnas de tu hoja de cálculo tengan información.</p></div>`;
           return;
         }
 
@@ -628,7 +632,7 @@
       }
     }
 
-    // Manejadores de Eventos
+    // Eventos
     els.searchInput.addEventListener('input', e => { state.search = e.target.value; applyFilters(); });
     els.sortSelect.addEventListener('change', e => { state.sort = e.target.value; applyFilters(); });
     els.availabilitySelect.addEventListener('change', e => { state.availability = e.target.value; applyFilters(); });
