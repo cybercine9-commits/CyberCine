@@ -193,6 +193,7 @@
     .modal-media img{width:100%; height:100%; object-fit:cover; display:block; opacity:0; transition:opacity .2s}
     .modal-media img.loaded{opacity:1}
     .modal-content{padding:20px; display:flex; flex-direction:column; justify-content:space-between}
+    .modal-content h3 {margin: 0;}
     .modal-head{display:flex; justify-content:space-between; align-items:flex-start; gap:10px}
     .modal-title{margin:0; font-size:1.3rem; font-weight:800}
     .detail-grid{display:grid; gap:10px; margin:12px 0}
@@ -360,12 +361,13 @@
   <div class="toast-container" id="toastContainer"></div>
 
   <script>
-    // ==========================================
-    // PARÁMETROS CENTRALES DE CONFIGURACIÓN
-    // ==========================================
-    const URL_CSV = "https://docs.google.com/spreadsheets/d/1cRLBkJaEfj5GqBiX33hl4pn9MUefPnw6Ak0TMxcunGo/edit?usp=sharing";        // Enlace de Google Sheets en formato .csv
-    const WHATSAPP_NUMBER = "51912601520";   // Destino del pedido (Prefijo internacional + número)
-    const GOAL = 5;                          // Cantidad meta para bonificación/combo
+    // Limpieza radical de cachés antiguas atascadas en la sesión
+    sessionStorage.removeItem("cybercine_raw_cache");
+    sessionStorage.removeItem("cybercine_session_raw");
+
+    const URL_CSV = "https://docs.google.com/spreadsheets/d/1cRLBkJaEfj5GqBiX33hl4pn9MUefPnw6Ak0TMxcunGo/pub?output=csv";
+    const WHATSAPP_NUMBER = "51912601520";   
+    const GOAL = 5;                          
 
     const CART_KEY = "cybercine_cart_store";
     const DEFAULT_IMAGE = "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(`
@@ -413,14 +415,12 @@
 
     function normalizePrice(value) {
       const cleaned = String(value ?? '').replace(/[^\d.,-]/g, '').replace(/,/g, '.');
-      return parseFloat(cleaned.match(/-?\d+(?:\.\d+)?/)?.[0] ?? '0') || 0;
+      return parseFloat(cleaned.match(/-?\d+(Y?:\.\d+)?/)?.[0] ?? '0') || 0;
     }
 
-    // Soporte flexible para detectar stock (si, disponible, activo)
     function normalizeAvailability(value) {
       const raw = String(value ?? '').trim().toLowerCase();
-      if (!raw || ['agotado', 'no', '0', 'false', 'sin stock', 'sold out'].includes(raw)) return false;
-      return true;
+      return !['agotado', 'no', '0', 'false', 'sin stock', 'sold out'].includes(raw);
     }
 
     function normalizeImageUrl(url) {
@@ -433,7 +433,7 @@
       if (!product) return; state.activeProduct = product;
       els.detailTitle.textContent = product.title;
       els.detailMeta.textContent = product.brand || 'Streaming Premium';
-      els.detailDesc.textContent = product.description || 'Cuenta privada estable con renovación automática mensual sin pérdida de perfiles.';
+      els.detailDesc.textContent = product.description || 'Cuenta privada estable con renovación automática mensual.';
       els.detailStock.textContent = product.inStock ? '✓ Stock Inmediato' : '✕ Temporalmente Agotado';
       els.detailStock.style.color = product.inStock ? 'var(--good)' : 'var(--bad)';
       els.detailPrice.textContent = currency.format(product.price);
@@ -576,24 +576,25 @@
       els.statusText.textContent = "Sincronizando con el servidor cloud...";
       
       try {
-        if (!URL_CSV || URL_CSV.includes("URL_CSV")) {
-          els.statusText.textContent = "Falta configurar la URL del Excel.";
-          return;
-        }
-
-        // Cache buster temporal dinámico para evitar almacenamiento obsoleto
-        const response = await fetch(URL_CSV + (URL_CSV.includes('?') ? '&' : '?') + 't=' + Date.now(), { cache: 'no-store' });
+        const response = await fetch(URL_CSV + '?t=' + Date.now(), { cache: 'no-store' });
         if (!response.ok) throw new Error();
         const csvText = await response.text();
 
-        // Control de errores de Privacidad en Google Sheets
+        // Control estricto de privacidad o enlaces incorrectos
         if (csvText.trim().startsWith('<!DOCTYPE') || csvText.includes('<html') || csvText.includes('ServiceLogin')) {
           els.statusText.textContent = "Error: Archivo Privado.";
           els.grid.innerHTML = `
             <div class="empty-state">
-              <h3 style="color:var(--bad)">⚠️ Tu Excel es Privado</h3>
-              <p style="margin-top:10px">El enlace está bien puesto, pero Google tiene bloqueada la descarga porque la hoja está restringida.</p>
-              <p style="color:var(--muted); font-size:0.9rem; margin-top:5px">Solución: Entra a tu Excel, haz clic en el botón azul de <b>Compartir</b> y cambia de "Restringido" a <b>"Cualquier persona con el enlace"</b>. Luego entra a <b>Archivo > Compartir > Publicar en la web</b> en formato <b>CSV</b> y dale a Publicar.</p>
+              <h3 style="color:var(--bad)">⚠️ Tu Google Sheets está Bloqueado (Privado)</h3>
+              <p style="margin-top:10px">El enlace del código es correcto, pero tu hoja de cálculo tiene candado privado y el navegador no puede descargar los datos.</p>
+              <p style="color:var(--text); font-size:0.95rem; margin-top:15px; font-weight:700;">Cómo solucionarlo en 1 minuto desde Google Sheets:</p>
+              <p style="color:var(--muted); font-size:0.9rem; text-align:left; max-width:550px; margin:5px auto; line-height:1.6;">
+                1. Entra a tu Google Sheets.<br>
+                2. Haz clic en el botón azul <b>Compartir</b> (Share) arriba a la derecha.<br>
+                3. En "Acceso general", cambia de "Restringido" a <b>"Cualquier persona con el enlace"</b>.<br>
+                4. Entra al menú superior <b>Archivo > Compartir > Publicar en la web</b>.<br>
+                5. Selecciona la opción Valores separados por comas (<b>.csv</b>) y haz clic en <b>Publicar</b>.
+              </p>
             </div>`;
           return;
         }
