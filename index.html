@@ -217,11 +217,27 @@
 
     .hidden{display:none !important}
 
+    /* FIX: Variables y elementos de fondo faltantes */
+    :root { --warn: #F59E0B; }
+    .bg-orbs { position:fixed; inset:0; z-index:0; pointer-events:none; overflow:hidden; }
+    .stars { display:none; }
+    .orb {
+      position:absolute; border-radius:50%; pointer-events:none;
+      background: radial-gradient(circle, currentColor 0%, transparent 70%);
+      opacity:0.06; filter:blur(20px);
+      animation: orbFloat var(--dur, 15s) ease-in-out infinite alternate;
+    }
+    @keyframes orbFloat {
+      from { transform: translate(0, 0) scale(1); }
+      to   { transform: translate(var(--dx, 40px), var(--dy, 40px)) scale(1.1); }
+    }
+    .app { position: relative; z-index:1; }
+
     @media (max-width: 768px){
       .toolbar{grid-template-columns:1fr; gap:10px}
       .grid{grid-template-columns:repeat(2, minmax(0,1fr))}
       .modal-inner{grid-template-columns:1fr}
-      .modal-media{aspect-ratio:16/9; border-right:0; border-bottom:1px solid var(--line)}
+      .media{aspect-ratio:16/9; border-right:0; border-bottom:1px solid var(--line)}
     }
     @media (max-width: 480px){
       .grid{grid-template-columns:1fr}
@@ -361,11 +377,8 @@
   <div class="toast-container" id="toastContainer"></div>
 
   <script>
-    // Limpieza radical de cachés antiguas atascadas en la sesión
-    sessionStorage.removeItem("cybercine_raw_cache");
-    sessionStorage.removeItem("cybercine_session_raw");
-
-    const URL_CSV = "https://docs.google.com/spreadsheets/d/1cRLBkJaEfj5GqBiX33hl4pn9MUefPnw6Ak0TMxcunGo/edit?usp=sharing";
+    // Parámetros estables de enlace directo
+    const URL_CSV = "https://docs.google.com/spreadsheets/d/1cRLBkJaEfj5GqBiX33hl4pn9MUefPnw6Ak0TMxcunGo/export?format=csv&gid=0";
     const WHATSAPP_NUMBER = "51912601520";   
     const GOAL = 5;                          
 
@@ -415,7 +428,7 @@
 
     function normalizePrice(value) {
       const cleaned = String(value ?? '').replace(/[^\d.,-]/g, '').replace(/,/g, '.');
-      return parseFloat(cleaned.match(/-?\d+(Y?:\.\d+)?/)?.[0] ?? '0') || 0;
+      return parseFloat(cleaned.match(/-?\d+(?:\.\d+)?/)?.[0] ?? '0') || 0;
     }
 
     function normalizeAvailability(value) {
@@ -425,8 +438,14 @@
 
     function normalizeImageUrl(url) {
       const raw = String(url ?? '').trim(); if (!raw) return DEFAULT_IMAGE;
-      const m = raw.match(/drive\.google\.com\/(?:file\/d\/|open\?id=|uc\?id=)([\w-]+)/i) || raw.match(/id=([\w-]+)/i);
-      return m ? `https://drive.google.com/thumbnail?id=${m[1]}&sz=w400` : raw;
+      const mD = raw.match(/\/d\/([a-zA-Z0-9_-]+)/);
+      const mId = raw.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+      const id = (mD && mD[1]) || (mId && mId[1]);
+      return id ? `https://drive.google.com/thumbnail?id=${id}&sz=w400` : (raw || DEFAULT_IMAGE);
+    }
+
+    function productUrl(product) {
+      return `${window.location.origin}${window.location.pathname}?item=${encodeURIComponent(product.id)}`;
     }
 
     function openModal(product) {
@@ -493,6 +512,11 @@
       const total = state.cart.reduce((sum, i) => sum + i.qty * i.price, 0);
       const msg = [`⚡ *NUEVO PEDIDO — CYBERCINE* 🎬`, '', ...lines, '', `➡️ *Total Neto a pagar:* ${currency.format(total)}`, '', `_Solicito cuentas y datos de transferencia (Yape/Plin)_`].join('\n');
       window.open(`https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(msg)}`, '_blank');
+    }
+
+    function clearCart() {
+      state.cart = []; saveCart();
+      showToast('Carrito vaciado', 'Se eliminaron todos los servicios.', 'warn');
     }
 
     function quickBuy(product) {
@@ -565,7 +589,7 @@
         id, formattedId: `#${String(id).padStart(3, '0')}`, title: title || `Servicio ${idx + 1}`,
         image: normalizeImageUrl(getField(row, ['imagen', 'image', 'url', 'portada'])),
         price: normalizePrice(getField(row, ['precio', 'price', 'valor'])),
-        description: String(getField(row, ['descripcion', 'description', 'sinopsis']) || 'Acceso privado estable con soporte continuo.').trim(),
+        description: String(getField(row, ['descripcion', 'description', 'sinopsis']) || 'Acceso privado premium estable con soporte continuo.').trim(),
         brand: String(getField(row, ['marca', 'brand', 'estudio']) || 'Streaming').trim(),
         inStock: normalizeAvailability(getField(row, ['stock', 'disponibilidad', 'estado']))
       };
@@ -576,7 +600,9 @@
       els.statusText.textContent = "Sincronizando con el servidor cloud...";
       
       try {
-        const response = await fetch(URL_CSV + '?t=' + Date.now(), { cache: 'no-store' });
+        // Corrección del Cache Buster para URLs que ya tienen parámetros activos
+        const urlConnector = URL_CSV.includes('?') ? '&' : '?';
+        const response = await fetch(URL_CSV + urlConnector + 't=' + Date.now(), { cache: 'no-store' });
         if (!response.ok) throw new Error();
         const csvText = await response.text();
 
@@ -599,7 +625,12 @@
           return;
         }
 
-        state.products = Papa.parse(csvText, { header: true, skipEmptyLines: true, transformHeader: h => String(h).trim() }).data.map(parseRow).filter(p => p.title);
+        // Lector inteligente de formato regional: Detecta comas (,) o puntos y comas (;) de Excel
+        let detectedDelimiter = ",";
+        const firstLine = csvText.split('\n')[0] || "";
+        if (firstLine.includes(";")) { detectedDelimiter = ";"; }
+
+        state.products = Papa.parse(csvText, { header: true, skipEmptyLines: true, delimiter: detectedDelimiter, transformHeader: h => String(h).trim() }).data.map(parseRow).filter(p => p.title);
         
         if (state.products.length === 0) {
           els.statusText.textContent = "0 productos encontrados.";
@@ -629,7 +660,7 @@
         o.style.width = `${s}px`; o.style.height = `${s}px`; o.style.left = `${Math.random() * 100}%`; o.style.top = `${Math.random() * 100}%`;
         o.style.color = `hsla(${180 + Math.random() * 100}, 85%, 60%, .8)`;
         o.style.setProperty('--dx', `${Math.random() * 160 - 80}px`); o.style.setProperty('--dy', `${Math.random() * 160 - 80}px`);
-        o.style.animationDuration = `${10 + Math.random() * 12}s`; els.bgOrbs.appendChild(o);
+        o.style.setProperty('--dur', `${10 + Math.random() * 12}s`); els.bgOrbs.appendChild(o);
       }
     }
 
